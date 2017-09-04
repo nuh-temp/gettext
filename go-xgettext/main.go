@@ -142,26 +142,26 @@ func inspectNodeForTranslations(fset *token.FileSet, f *ast.File, n ast.Node) bo
 	switch x := n.(type) {
 	case *ast.CallExpr:
 		var i18nStr, i18nStrPlural string
-		//if sel, ok := x.Fun.(*ast.Ident); ok {
-
-		//}
 		switch sel := x.Fun.(type) {
 		case *ast.Ident:
 			if sel.Name == gettextFuncNamePlural {
-				i18nStr = x.Args[0].(*ast.BasicLit).Value
-				i18nStrPlural = x.Args[1].(*ast.BasicLit).Value
+				i18nStr = x.Args[opts.FirstArgIdx].(*ast.BasicLit).Value
+				i18nStrPlural = x.Args[opts.FirstArgIdx+1].(*ast.BasicLit).Value
 			}
 			if sel.Name == gettextFuncName {
-				i18nStr = constructValue(x.Args[0])
+				i18nStr = constructValue(x.Args[opts.FirstArgIdx])
 			}
 		case *ast.SelectorExpr:
-			if sel.Sel.Name == gettextFuncNamePlural && sel.X.(*ast.Ident).Name == gettextSelectorPlural {
-				i18nStr = x.Args[0].(*ast.BasicLit).Value
-				i18nStrPlural = x.Args[1].(*ast.BasicLit).Value
+			if sel.Sel.Name == gettextFuncNamePlural {
+				if funcSel, ok := sel.X.(*ast.Ident); ok && funcSel.Name == gettextSelectorPlural {
+					i18nStr = x.Args[opts.FirstArgIdx].(*ast.BasicLit).Value
+					i18nStrPlural = x.Args[opts.FirstArgIdx+1].(*ast.BasicLit).Value
+				}
 			}
-
-			if sel.Sel.Name == gettextFuncName && sel.X.(*ast.Ident).Name == gettextSelector {
-				i18nStr = constructValue(x.Args[0])
+			if sel.Sel.Name == gettextFuncName {
+				if funcSel, ok := sel.X.(*ast.Ident); ok && funcSel.Name == gettextSelector {
+					i18nStr = constructValue(x.Args[opts.FirstArgIdx])
+				}
 			}
 		}
 
@@ -332,6 +332,8 @@ var opts struct {
 
 	Keyword       string `short:"k" long:"keyword" default:"gettext.Gettext" description:"look for WORD as the keyword for singular strings"`
 	KeywordPlural string `long:"keyword-plural" default:"gettext.NGettext" description:"look for WORD as the keyword for plural strings"`
+
+	FirstArgIdx int `long:"first-arg-idx" default:"0" description:"Index of first meaningful argument in gettext function call"`
 }
 
 func main() {
