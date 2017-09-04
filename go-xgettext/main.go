@@ -27,6 +27,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -38,8 +39,21 @@ import (
 	"sort"
 	"strings"
 	"time"
+)
 
-	"github.com/jessevdk/go-flags"
+var (
+	output           = flag.String("output", "", "output to specified file")
+	addComments      = flag.Bool("add-comments", false, "place all comment blocks preceding keyword lines in output file")
+	addCommentsTag   = flag.String("add-comments-tag", "", "place comment blocks starting with TAG and prceding keyword lines in output file")
+	sortOutput       = flag.Bool("sort-output", false, "generate sorted output")
+	noLocation       = flag.Bool("no-location", false, "do not write '#: filename:line' lines")
+	msgIDBugsAddress = flag.String("msgid-bugs-address", "EMAIL", "set report address for msgid bugs")
+	packageName      = flag.String("package-name", "", "set package name in output")
+
+	keyword       = flag.String("keyword", "gettext.Gettext", "look for WORD as the keyword for singular strings")
+	keywordPlural = flag.String("keyword-plural", "gettext.NGettext", "look for WORD as the keyword for plural strings")
+
+	firstArgIdx = flag.Int("first-arg-idx", 0, "Index of first meaningful argument in gettext function call")
 )
 
 type msgID struct {
@@ -86,7 +100,7 @@ func findCommentsForTranslation(fset *token.FileSet, f *ast.File, posCall token.
 
 	// only return if we have a matching prefix
 	formatedComment := formatComment(com)
-	needle := fmt.Sprintf("#. %s", opts.AddCommentsTag)
+	needle := fmt.Sprintf("#. %s", *addCommentsTag)
 	if !strings.HasPrefix(formatedComment, needle) {
 		formatedComment = ""
 	}
@@ -120,7 +134,7 @@ func constructValue(val interface{}) string {
 func inspectNodeForTranslations(fset *token.FileSet, f *ast.File, n ast.Node) bool {
 	// FIXME: this assume we always have a "gettext.Gettext" style keyword
 	var gettextSelector, gettextFuncName string
-	l := strings.Split(opts.Keyword, ".")
+	l := strings.Split(*keyword, ".")
 
 	if len(l) > 1 {
 		gettextSelector = l[0]
@@ -130,7 +144,7 @@ func inspectNodeForTranslations(fset *token.FileSet, f *ast.File, n ast.Node) bo
 	}
 
 	var gettextSelectorPlural, gettextFuncNamePlural string
-	l = strings.Split(opts.KeywordPlural, ".")
+	l = strings.Split(*keywordPlural, ".")
 
 	if len(l) > 1 {
 		gettextSelectorPlural = l[0]
@@ -145,22 +159,22 @@ func inspectNodeForTranslations(fset *token.FileSet, f *ast.File, n ast.Node) bo
 		switch sel := x.Fun.(type) {
 		case *ast.Ident:
 			if sel.Name == gettextFuncNamePlural {
-				i18nStr = x.Args[opts.FirstArgIdx].(*ast.BasicLit).Value
-				i18nStrPlural = x.Args[opts.FirstArgIdx+1].(*ast.BasicLit).Value
+				i18nStr = x.Args[*firstArgIdx].(*ast.BasicLit).Value
+				i18nStrPlural = x.Args[*firstArgIdx+1].(*ast.BasicLit).Value
 			}
 			if sel.Name == gettextFuncName {
-				i18nStr = constructValue(x.Args[opts.FirstArgIdx])
+				i18nStr = constructValue(x.Args[*firstArgIdx])
 			}
 		case *ast.SelectorExpr:
 			if sel.Sel.Name == gettextFuncNamePlural {
 				if funcSel, ok := sel.X.(*ast.Ident); ok && funcSel.Name == gettextSelectorPlural {
-					i18nStr = x.Args[opts.FirstArgIdx].(*ast.BasicLit).Value
-					i18nStrPlural = x.Args[opts.FirstArgIdx+1].(*ast.BasicLit).Value
+					i18nStr = x.Args[*firstArgIdx].(*ast.BasicLit).Value
+					i18nStrPlural = x.Args[*firstArgIdx+1].(*ast.BasicLit).Value
 				}
 			}
 			if sel.Sel.Name == gettextFuncName {
 				if funcSel, ok := sel.X.(*ast.Ident); ok && funcSel.Name == gettextSelector {
-					i18nStr = constructValue(x.Args[opts.FirstArgIdx])
+					i18nStr = constructValue(x.Args[*firstArgIdx])
 				}
 			}
 		}
@@ -263,7 +277,7 @@ msgstr  "Project-Id-Version: %s\n"
         "Content-Type: text/plain; charset=CHARSET\n"
         "Content-Transfer-Encoding: 8bit\n"
 
-`, opts.PackageName, opts.MsgIDBugsAddress, formatTime())
+`, *packageName, *msgIDBugsAddress, formatTime())
 	fmt.Fprintf(out, "%s", header)
 
 	// yes, this is the way to do it in go
@@ -271,7 +285,7 @@ msgstr  "Project-Id-Version: %s\n"
 	for k := range msgIDs {
 		sortedKeys = append(sortedKeys, k)
 	}
-	if opts.SortOutput {
+	if *sortOutput {
 		sort.Strings(sortedKeys)
 	}
 
@@ -279,11 +293,11 @@ msgstr  "Project-Id-Version: %s\n"
 	for _, k := range sortedKeys {
 		msgidList := msgIDs[k]
 		for _, msgid := range msgidList {
-			if opts.AddComments || opts.AddCommentsTag != "" {
+			if *addComments || *addCommentsTag != "" {
 				fmt.Fprintf(out, "%s", msgid.comment)
 			}
 		}
-		if !opts.NoLocation {
+		if !*noLocation {
 			fmt.Fprintf(out, "#:")
 			for _, msgid := range msgidList {
 				fmt.Fprintf(out, " %s:%d", msgid.fname, msgid.line)
@@ -314,45 +328,26 @@ msgstr  "Project-Id-Version: %s\n"
 
 }
 
-// FIXME: this must be setable via go-flags
-var opts struct {
-	Output string `short:"o" long:"output" description:"output to specified file"`
-
-	AddComments bool `short:"c" long:"add-comments" description:"place all comment blocks preceding keyword lines in output file"`
-
-	AddCommentsTag string `long:"add-comments-tag" description:"place comment blocks starting with TAG and prceding keyword lines in output file"`
-
-	SortOutput bool `short:"s" long:"sort-output" description:"generate sorted output"`
-
-	NoLocation bool `long:"no-location" description:"do not write '#: filename:line' lines"`
-
-	MsgIDBugsAddress string `long:"msgid-bugs-address" default:"EMAIL" description:"set report address for msgid bugs"`
-
-	PackageName string `long:"package-name" description:"set package name in output"`
-
-	Keyword       string `short:"k" long:"keyword" default:"gettext.Gettext" description:"look for WORD as the keyword for singular strings"`
-	KeywordPlural string `long:"keyword-plural" default:"gettext.NGettext" description:"look for WORD as the keyword for plural strings"`
-
-	FirstArgIdx int `long:"first-arg-idx" default:"0" description:"Index of first meaningful argument in gettext function call"`
-}
-
 func main() {
-	// parse args
-	args, err := flags.ParseArgs(&opts, os.Args)
-	if err != nil {
-		log.Fatalf("ParseArgs failed %s", err)
+	flag.Parse()
+	args := flag.Args()
+	if len(args) == 0 {
+		fmt.Println("Usage: go-xgettext [options] file1 ...")
+		fmt.Println("Options:")
+		flag.PrintDefaults()
+		os.Exit(0)
 	}
 
-	if err := processFiles(args[1:]); err != nil {
+	if err := processFiles(args); err != nil {
 		log.Fatalf("processFiles failed with: %s", err)
 	}
 
 	out := os.Stdout
-	if opts.Output != "" {
+	if *output != "" {
 		var err error
-		out, err = os.Create(opts.Output)
+		out, err = os.Create(*output)
 		if err != nil {
-			log.Fatalf("failed to create %s: %s", opts.Output, err)
+			log.Fatalf("failed to create %s: %s", *output, err)
 		}
 	}
 	writePotFile(out)
