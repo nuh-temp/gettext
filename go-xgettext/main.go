@@ -27,6 +27,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"go/ast"
@@ -42,19 +43,36 @@ import (
 )
 
 var (
-	output           = flag.String("output", "", "output to specified file")
-	addComments      = flag.Bool("add-comments", false, "place all comment blocks preceding keyword lines in output file")
-	addCommentsTag   = flag.String("add-comments-tag", "", "place comment blocks starting with TAG and prceding keyword lines in output file")
-	sortOutput       = flag.Bool("sort-output", false, "generate sorted output")
-	noLocation       = flag.Bool("no-location", false, "do not write '#: filename:line' lines")
-	msgIDBugsAddress = flag.String("msgid-bugs-address", "EMAIL", "set report address for msgid bugs")
-	packageName      = flag.String("package-name", "", "set package name in output")
+	output           = flag.String("output", "", "Output to specified file.")
+	addComments      = flag.Bool("add-comments", false, "Place all comment blocks preceding keyword lines in output file.")
+	addCommentsTag   = flag.String("add-comments-tag", "", "Place comment blocks starting with TAG and preceding keyword lines in output file.")
+	sortOutput       = flag.Bool("sort-output", false, "Generate sorted output.")
+	noLocation       = flag.Bool("no-location", false, "Do not write '#: filename:line' lines.")
+	msgIDBugsAddress = flag.String("msgid-bugs-address", "EMAIL", "set report address for msgid bugs.")
+	packageName      = flag.String("package-name", "", "Set package name in output.")
 
-	keyword       = flag.String("keyword", "gettext.Gettext", "look for WORD as the keyword for singular strings")
-	keywordPlural = flag.String("keyword-plural", "gettext.NGettext", "look for WORD as the keyword for plural strings")
+	keyword       = flag.String("keyword", "gettext.Gettext", "Look for WORD as the keyword for singular strings.")
+	keywordPlural = flag.String("keyword-plural", "gettext.NGettext", "Look for WORD as the keyword for plural strings.")
 
-	firstArgIdx = flag.Int("first-arg-idx", 0, "Index of first meaningful argument in gettext function call")
+	skipArgs = flag.Int("skip-args", 0, "Number of arguments to skip in gettext function call before considering a text message argument.")
+
+	keywordCfg = flag.String("keyword-cfg", "", "Path to keywords configuration file in JSON format. When given --keyword and --keywordPlural are ignored.")
 )
+
+const (
+	kTypeSingular = "singular"
+	kTypePlural   = "plural"
+)
+
+type keywordDef struct {
+	Type     string `json:"type"`
+	Name     string `json:"name"`
+	SkipArgs int    `json:"skipArgs"`
+}
+
+type keywords map[string]*keywordDef
+
+type allKeywordsConfig []*keywordDef
 
 type msgID struct {
 	msgidPlural string
@@ -131,51 +149,38 @@ func constructValue(val interface{}) string {
 	}
 }
 
-func inspectNodeForTranslations(fset *token.FileSet, f *ast.File, n ast.Node) bool {
-	// FIXME: this assume we always have a "gettext.Gettext" style keyword
-	var gettextSelector, gettextFuncName string
-	l := strings.Split(*keyword, ".")
-
-	if len(l) > 1 {
-		gettextSelector = l[0]
-		gettextFuncName = l[1]
-	} else {
-		gettextFuncName = l[0]
+func parseFunExpr(path string, expr ast.Expr) string {
+	switch sel := expr.(type) {
+	case *ast.Ident:
+		if path != "" {
+			path = "." + path
+		}
+		return sel.Name + path
+	case *ast.SelectorExpr:
+		if path != "" {
+			path = "." + path
+		}
+		return parseFunExpr(sel.Sel.Name+path, sel.X)
 	}
+	return ""
+}
 
-	var gettextSelectorPlural, gettextFuncNamePlural string
-	l = strings.Split(*keywordPlural, ".")
-
-	if len(l) > 1 {
-		gettextSelectorPlural = l[0]
-		gettextFuncNamePlural = l[1]
-	} else {
-		gettextFuncNamePlural = l[0]
-	}
-
+func inspectNodeForTranslations(k keywords, fset *token.FileSet, f *ast.File, n ast.Node) bool {
 	switch x := n.(type) {
 	case *ast.CallExpr:
 		var i18nStr, i18nStrPlural string
-		switch sel := x.Fun.(type) {
-		case *ast.Ident:
-			if sel.Name == gettextFuncNamePlural {
-				i18nStr = x.Args[*firstArgIdx].(*ast.BasicLit).Value
-				i18nStrPlural = x.Args[*firstArgIdx+1].(*ast.BasicLit).Value
-			}
-			if sel.Name == gettextFuncName {
-				i18nStr = constructValue(x.Args[*firstArgIdx])
-			}
-		case *ast.SelectorExpr:
-			if sel.Sel.Name == gettextFuncNamePlural {
-				if funcSel, ok := sel.X.(*ast.Ident); ok && funcSel.Name == gettextSelectorPlural {
-					i18nStr = x.Args[*firstArgIdx].(*ast.BasicLit).Value
-					i18nStrPlural = x.Args[*firstArgIdx+1].(*ast.BasicLit).Value
-				}
-			}
-			if sel.Sel.Name == gettextFuncName {
-				if funcSel, ok := sel.X.(*ast.Ident); ok && funcSel.Name == gettextSelector {
-					i18nStr = constructValue(x.Args[*firstArgIdx])
-				}
+		name := parseFunExpr("", x.Fun)
+		if name == "" {
+			break
+		}
+		if keyword, ok := k[name]; ok {
+			idx := keyword.SkipArgs
+			switch keyword.Type {
+			case kTypeSingular:
+				i18nStr = constructValue(x.Args[idx])
+			case kTypePlural:
+				i18nStr = x.Args[idx].(*ast.BasicLit).Value
+				i18nStrPlural = x.Args[idx+1].(*ast.BasicLit).Value
 			}
 		}
 
@@ -234,6 +239,35 @@ func processFiles(args []string) error {
 	return nil
 }
 
+func parseKeywords() (keywords, error) {
+	k := make(keywords)
+	if *keywordCfg != "" {
+		data, err := ioutil.ReadFile(*keywordCfg)
+		if err != nil {
+			return nil, err
+		}
+		var keywordList []*keywordDef
+		if err := json.Unmarshal(data, &keywordList); err != nil {
+			return nil, err
+		}
+		for _, keyword := range keywordList {
+			k[keyword.Name] = keyword
+		}
+	} else {
+		k[*keyword] = &keywordDef{
+			Type:     kTypeSingular,
+			Name:     *keyword,
+			SkipArgs: *skipArgs,
+		}
+		k[*keywordPlural] = &keywordDef{
+			Type:     kTypePlural,
+			Name:     *keywordPlural,
+			SkipArgs: *skipArgs,
+		}
+	}
+	return k, nil
+}
+
 func processSingleGoSource(fset *token.FileSet, fname string) error {
 	fnameContent, err := ioutil.ReadFile(fname)
 	if err != nil {
@@ -246,8 +280,13 @@ func processSingleGoSource(fset *token.FileSet, fname string) error {
 		panic(err)
 	}
 
+	k, err := parseKeywords()
+	if err != nil {
+		panic(err)
+	}
+
 	ast.Inspect(f, func(n ast.Node) bool {
-		return inspectNodeForTranslations(fset, f, n)
+		return inspectNodeForTranslations(k, fset, f, n)
 	})
 
 	return nil
