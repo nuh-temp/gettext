@@ -56,13 +56,14 @@ func makeGoSourceFile(c *C, content []byte) string {
 
 func (s *xgettextTestSuite) SetUpTest(c *C) {
 	// our test defaults
-	opts.NoLocation = false
-	opts.AddCommentsTag = "TRANSLATORS:"
-	opts.Keyword = "i18n.G"
-	opts.KeywordPlural = "i18n.NG"
-	opts.SortOutput = true
-	opts.PackageName = "snappy"
-	opts.MsgIDBugsAddress = "snappy-devel@lists.ubuntu.com"
+	*noLocation = false
+	*addCommentsTag = "TRANSLATORS:"
+	*keyword = "i18n.G"
+	*keywordPlural = "i18n.NG"
+	*keywordContextual = "i18n.CG"
+	*sortOutput = true
+	*packageName = "snappy"
+	*msgIDBugsAddress = "snappy-devel@lists.ubuntu.com"
 
 	// mock time
 	formatTime = func() string {
@@ -240,7 +241,7 @@ func (s *xgettextTestSuite) TestWriteOutputNoLocation(c *C) {
 		},
 	}
 
-	opts.NoLocation = true
+	*noLocation = true
 	out := bytes.NewBuffer([]byte(""))
 	writePotFile(out)
 
@@ -317,7 +318,7 @@ func (s *xgettextTestSuite) TestWriteOutputSorted(c *C) {
 		},
 	}
 
-	opts.SortOutput = true
+	*sortOutput = true
 	// we need to run this a bunch of times as the ordering might
 	// be right by pure chance
 	for i := 0; i < 10; i++ {
@@ -515,6 +516,54 @@ func main() {
 	expected := fmt.Sprintf(`%s
 #: %[2]s:4
 msgid   "foo \"bar\""
+msgstr  ""
+
+`, header, fname)
+	c.Check(out.String(), Equals, expected)
+
+}
+
+func (s *xgettextTestSuite) TestSkipArgs(c *C) {
+	fname := makeGoSourceFile(c, []byte(`package main
+
+func main() {
+    i18n.G("arg-to-skip", "foo")
+}
+`))
+	*skipArgs = 1
+	err := processFiles([]string{fname})
+	c.Assert(err, IsNil)
+
+	out := bytes.NewBuffer([]byte(""))
+	writePotFile(out)
+
+	expected := fmt.Sprintf(`%s
+#: %[2]s:4
+msgid   "foo"
+msgstr  ""
+
+`, header, fname)
+	c.Check(out.String(), Equals, expected)
+
+}
+
+func (s *xgettextTestSuite) TestMsgCtxt(c *C) {
+	fname := makeGoSourceFile(c, []byte(`package main
+
+func main() {
+    i18n.CG("ctx1", "foo")
+}
+`))
+	err := processFiles([]string{fname})
+	c.Assert(err, IsNil)
+
+	out := bytes.NewBuffer([]byte(""))
+	writePotFile(out)
+
+	expected := fmt.Sprintf(`%s
+#: %[2]s:4
+msgctxt "ctx1"
+msgid   "foo"
 msgstr  ""
 
 `, header, fname)

@@ -51,8 +51,9 @@ var (
 	msgIDBugsAddress = flag.String("msgid-bugs-address", "EMAIL", "set report address for msgid bugs.")
 	packageName      = flag.String("package-name", "", "Set package name in output.")
 
-	keyword       = flag.String("keyword", "gettext.Gettext", "Look for WORD as the keyword for singular strings.")
-	keywordPlural = flag.String("keyword-plural", "gettext.NGettext", "Look for WORD as the keyword for plural strings.")
+	keyword           = flag.String("keyword", "gettext.Gettext", "Look for WORD as the keyword for singular strings.")
+	keywordPlural     = flag.String("keyword-plural", "gettext.NGettext", "Look for WORD as the keyword for plural strings.")
+	keywordContextual = flag.String("keyword-contextual", "gettext.NCGettext", "Look for WORD as the keyword for contextual strings.")
 
 	skipArgs = flag.Int("skip-args", 0, "Number of arguments to skip in gettext function call before considering a text message argument.")
 
@@ -60,8 +61,9 @@ var (
 )
 
 const (
-	kTypeSingular = "singular"
-	kTypePlural   = "plural"
+	kTypeSingular   = "singular"
+	kTypePlural     = "plural"
+	kTypeContextual = "contextual"
 )
 
 type keywordDef struct {
@@ -76,6 +78,7 @@ type allKeywordsConfig []*keywordDef
 
 type msgID struct {
 	msgidPlural string
+	msgctxt     string
 	comment     string
 	fname       string
 	line        int
@@ -168,7 +171,7 @@ func parseFunExpr(path string, expr ast.Expr) string {
 func inspectNodeForTranslations(k keywords, fset *token.FileSet, f *ast.File, n ast.Node) bool {
 	switch x := n.(type) {
 	case *ast.CallExpr:
-		var i18nStr, i18nStrPlural string
+		var i18nStr, i18nStrPlural, i18nCtxt string
 		name := parseFunExpr("", x.Fun)
 		if name == "" {
 			break
@@ -179,8 +182,11 @@ func inspectNodeForTranslations(k keywords, fset *token.FileSet, f *ast.File, n 
 			case kTypeSingular:
 				i18nStr = constructValue(x.Args[idx])
 			case kTypePlural:
-				i18nStr = x.Args[idx].(*ast.BasicLit).Value
-				i18nStrPlural = x.Args[idx+1].(*ast.BasicLit).Value
+				i18nStr = constructValue(x.Args[idx])
+				i18nStrPlural = constructValue(x.Args[idx+1])
+			case kTypeContextual:
+				i18nCtxt = constructValue(x.Args[idx])
+				i18nStr = constructValue(x.Args[idx+1])
 			}
 		}
 
@@ -200,6 +206,7 @@ func inspectNodeForTranslations(k keywords, fset *token.FileSet, f *ast.File, n 
 		msgIDs[msgidStr] = append(msgIDs[msgidStr], msgID{
 			formatHint:  formatHint,
 			msgidPlural: formatI18nStr(i18nStrPlural),
+			msgctxt:     formatI18nStr(i18nCtxt),
 			fname:       posCall.Filename,
 			line:        posCall.Line,
 			comment:     findCommentsForTranslation(fset, f, posCall),
@@ -262,6 +269,11 @@ func parseKeywords() (keywords, error) {
 		k[*keywordPlural] = &keywordDef{
 			Type:     kTypePlural,
 			Name:     *keywordPlural,
+			SkipArgs: *skipArgs,
+		}
+		k[*keywordContextual] = &keywordDef{
+			Type:     kTypeContextual,
+			Name:     *keywordContextual,
 			SkipArgs: *skipArgs,
 		}
 	}
@@ -353,6 +365,9 @@ msgstr  "Project-Id-Version: %s\n"
 			out := strings.Replace(in, "\\n", "\\n\"\n        \"", -1)
 			// cleanup too aggressive splitting (empty "" lines)
 			return strings.TrimSuffix(out, "\"\n        \"")
+		}
+		if msgid.msgctxt != "" {
+			fmt.Fprintf(out, "msgctxt \"%v\"\n", formatOutput(msgid.msgctxt))
 		}
 		fmt.Fprintf(out, "msgid   \"%v\"\n", formatOutput(k))
 		if msgid.msgidPlural != "" {
