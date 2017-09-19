@@ -129,26 +129,32 @@ func findCommentsForTranslation(fset *token.FileSet, f *ast.File, posCall token.
 	return formatedComment
 }
 
-func constructValue(val interface{}) string {
+func constructValue(val interface{}) (string, error) {
 	switch val.(type) {
 	case *ast.BasicLit:
-		return val.(*ast.BasicLit).Value
+		return val.(*ast.BasicLit).Value, nil
 	// this happens for constructs like:
 	//  gettext.Gettext("foo" + "bar")
 	case *ast.BinaryExpr:
 		// we only support string concat
 		if val.(*ast.BinaryExpr).Op != token.ADD {
-			return ""
+			return "", nil
 		}
-		left := constructValue(val.(*ast.BinaryExpr).X)
+		left, err := constructValue(val.(*ast.BinaryExpr).X)
+		if err != nil {
+			return "", err
+		}
 		// strip right " (or `)
 		left = left[0 : len(left)-1]
-		right := constructValue(val.(*ast.BinaryExpr).Y)
+		right, err := constructValue(val.(*ast.BinaryExpr).Y)
+		if err != nil {
+			return "", err
+		}
 		// strip left " (or `)
 		right = right[1:len(right)]
-		return left + right
+		return left + right, nil
 	default:
-		panic(fmt.Sprintf("unknown type: %v", val))
+		return "", fmt.Errorf("unknown type: %v", val)
 	}
 }
 
@@ -172,6 +178,7 @@ func inspectNodeForTranslations(k keywords, fset *token.FileSet, f *ast.File, n 
 	switch x := n.(type) {
 	case *ast.CallExpr:
 		var i18nStr, i18nStrPlural, i18nCtxt string
+		var err error
 		name := parseFunExpr("", x.Fun)
 		if name == "" {
 			break
@@ -180,14 +187,24 @@ func inspectNodeForTranslations(k keywords, fset *token.FileSet, f *ast.File, n 
 			idx := keyword.SkipArgs
 			switch keyword.Type {
 			case kTypeSingular:
-				i18nStr = constructValue(x.Args[idx])
+				i18nStr, err = constructValue(x.Args[idx])
 			case kTypePlural:
-				i18nStr = constructValue(x.Args[idx])
-				i18nStrPlural = constructValue(x.Args[idx+1])
+				i18nStr, err = constructValue(x.Args[idx])
+				if err != nil {
+					break
+				}
+				i18nStrPlural, err = constructValue(x.Args[idx+1])
 			case kTypeContextual:
-				i18nCtxt = constructValue(x.Args[idx])
-				i18nStr = constructValue(x.Args[idx+1])
+				i18nCtxt, err = constructValue(x.Args[idx])
+				if err != nil {
+					break
+				}
+				i18nStr, err = constructValue(x.Args[idx+1])
 			}
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "WARN: Unable to obtain value at %s: %v\n", fset.Position(n.Pos()), err)
+			break
 		}
 
 		if i18nStr == "" {
