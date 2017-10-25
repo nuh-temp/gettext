@@ -51,9 +51,10 @@ var (
 	msgIDBugsAddress = flag.String("msgid-bugs-address", "EMAIL", "set report address for msgid bugs.")
 	packageName      = flag.String("package-name", "", "Set package name in output.")
 
-	keyword           = flag.String("keyword", "gettext.Gettext", "Look for WORD as the keyword for singular strings.")
-	keywordPlural     = flag.String("keyword-plural", "gettext.NGettext", "Look for WORD as the keyword for plural strings.")
-	keywordContextual = flag.String("keyword-contextual", "gettext.NCGettext", "Look for WORD as the keyword for contextual strings.")
+	keyword                 = flag.String("keyword", "gettext.Gettext", "Look for WORD as the keyword for singular strings.")
+	keywordPlural           = flag.String("keyword-plural", "gettext.NGettext", "Look for WORD as the keyword for plural strings.")
+	keywordContextual       = flag.String("keyword-contextual", "gettext.CGettext", "Look for WORD as the keyword for contextual strings.")
+	keywordPluralContextual = flag.String("keyword-plural-contextual", "gettext.CNGettext", "Look for WORD as the keyword for plural contextual strings.")
 
 	skipArgs = flag.Int("skip-args", 0, "Number of arguments to skip in gettext function call before considering a text message argument.")
 
@@ -61,9 +62,10 @@ var (
 )
 
 const (
-	kTypeSingular   = "singular"
-	kTypePlural     = "plural"
-	kTypeContextual = "contextual"
+	kTypeSingular         = "singular"
+	kTypePlural           = "plural"
+	kTypeContextual       = "contextual"
+	kTypePluralContextual = "pluralContextual"
 )
 
 type keywordDef struct {
@@ -200,6 +202,16 @@ func inspectNodeForTranslations(k keywords, fset *token.FileSet, f *ast.File, n 
 					break
 				}
 				i18nStr, err = constructValue(x.Args[idx+1])
+			case kTypePluralContextual:
+				i18nCtxt, err = constructValue(x.Args[idx])
+				if err != nil {
+					break
+				}
+				i18nStr, err = constructValue(x.Args[idx+1])
+				if err != nil {
+					break
+				}
+				i18nStrPlural, err = constructValue(x.Args[idx+2])
 			}
 		}
 		if err != nil {
