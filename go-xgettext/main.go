@@ -40,6 +40,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"path/filepath"
 )
 
 var (
@@ -76,7 +77,7 @@ type keywordDef struct {
 
 type keywords map[string]*keywordDef
 
-type allKeywordsConfig []*keywordDef
+// type allKeywordsConfig []*keywordDef
 
 type msgID struct {
 	msgidPlural string
@@ -153,7 +154,7 @@ func constructValue(val interface{}) (string, error) {
 			return "", err
 		}
 		// strip left " (or `)
-		right = right[1:len(right)]
+		right = right[1:]
 		return left + right, nil
 	default:
 		return "", fmt.Errorf("unknown type: %v", val)
@@ -267,8 +268,18 @@ func processFiles(args []string) error {
 
 	fset := token.NewFileSet()
 	for _, fname := range args {
-		if err := processSingleGoSource(fset, fname); err != nil {
-			return err
+		if _, err := os.Stat(fname); err==nil {
+			if err := processSingleGoSource(fset, fname); err != nil {
+				return err
+			}
+		} else {
+			if fnames , err := filepath.Glob(fname); err == nil {
+				for _, fname := range fnames {
+					if err := processSingleGoSource(fset, fname); err != nil {
+						return err
+					}
+				}
+			}
 		}
 	}
 
@@ -303,6 +314,11 @@ func parseKeywords() (keywords, error) {
 		k[*keywordContextual] = &keywordDef{
 			Type:     kTypeContextual,
 			Name:     *keywordContextual,
+			SkipArgs: *skipArgs,
+		}
+		k[*keywordPluralContextual] = &keywordDef{
+			Type:     kTypePluralContextual,
+			Name:     *keywordPluralContextual,
 			SkipArgs: *skipArgs,
 		}
 	}
@@ -361,7 +377,7 @@ msgstr  "Project-Id-Version: %s\n"
 	fmt.Fprintf(out, "%s", header)
 
 	// yes, this is the way to do it in go
-	sortedKeys := []string{}
+	var sortedKeys []string
 	for k := range msgIDs {
 		sortedKeys = append(sortedKeys, k)
 	}
@@ -415,7 +431,7 @@ func main() {
 	flag.Parse()
 	args := flag.Args()
 	if len(args) == 0 {
-		fmt.Println("Usage: go-xgettext [options] file1 ...")
+		fmt.Println("Usage: go-xgettext [options] file1 file2 fileGlobPattern...")
 		fmt.Println("Options:")
 		flag.PrintDefaults()
 		os.Exit(0)
