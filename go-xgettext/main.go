@@ -78,16 +78,33 @@ type keywords map[string]*keywordDef
 
 type allKeywordsConfig []*keywordDef
 
-type msgID struct {
+type msgKey struct {
+	msgctxt string
+	msgtext string
+}
+
+type msgData struct {
 	msgidPlural string
 	msgctxt     string
+	msgtext     string
 	comment     string
 	fname       string
 	line        int
 	formatHint  string
 }
 
-var msgIDs map[string][]msgID
+type msgKeyList []msgKey
+
+func (l msgKeyList) Len() int { return len(l) }
+func (l msgKeyList) Less(i, j int) bool {
+	if l[i].msgctxt != l[j].msgctxt {
+		return l[i].msgctxt < l[j].msgctxt
+	}
+	return l[i].msgtext < l[j].msgtext
+}
+func (l msgKeyList) Swap(i, j int) { l[i], l[j] = l[j], l[i] }
+
+var msgIDs map[msgKey][]msgData
 
 func formatComment(com string) string {
 	out := ""
@@ -230,12 +247,13 @@ func inspectNodeForTranslations(k keywords, fset *token.FileSet, f *ast.File, n 
 			formatHint = "c-format"
 		}
 
-		msgidStr := formatI18nStr(i18nStr)
 		posCall := fset.Position(n.Pos())
-		msgIDs[msgidStr] = append(msgIDs[msgidStr], msgID{
+		k := msgKey{i18nCtxt, i18nStr}
+		msgIDs[k] = append(msgIDs[k], msgData{
 			formatHint:  formatHint,
 			msgidPlural: formatI18nStr(i18nStrPlural),
 			msgctxt:     formatI18nStr(i18nCtxt),
+			msgtext:     formatI18nStr(i18nStr),
 			fname:       posCall.Filename,
 			line:        posCall.Line,
 			comment:     findCommentsForTranslation(fset, f, posCall),
@@ -263,7 +281,7 @@ func formatI18nStr(s string) string {
 
 func processFiles(args []string) error {
 	// go over the input files
-	msgIDs = make(map[string][]msgID)
+	msgIDs = make(map[msgKey][]msgData)
 
 	fset := token.NewFileSet()
 	for _, fname := range args {
@@ -361,30 +379,30 @@ msgstr  "Project-Id-Version: %s\n"
 	fmt.Fprintf(out, "%s", header)
 
 	// yes, this is the way to do it in go
-	sortedKeys := []string{}
+	var sortedKeys msgKeyList
 	for k := range msgIDs {
 		sortedKeys = append(sortedKeys, k)
 	}
 	if *sortOutput {
-		sort.Strings(sortedKeys)
+		sort.Sort(sortedKeys)
 	}
 
 	// FIXME: use template here?
 	for _, k := range sortedKeys {
-		msgidList := msgIDs[k]
-		for _, msgid := range msgidList {
+		msgList := msgIDs[k]
+		for _, msgid := range msgList {
 			if *addComments || *addCommentsTag != "" {
 				fmt.Fprintf(out, "%s", msgid.comment)
 			}
 		}
 		if !*noLocation {
 			fmt.Fprintf(out, "#:")
-			for _, msgid := range msgidList {
+			for _, msgid := range msgList {
 				fmt.Fprintf(out, " %s:%d", msgid.fname, msgid.line)
 			}
 			fmt.Fprintf(out, "\n")
 		}
-		msgid := msgidList[0]
+		msgid := msgList[0]
 		if msgid.formatHint != "" {
 			fmt.Fprintf(out, "#, %s\n", msgid.formatHint)
 		}
@@ -398,7 +416,7 @@ msgstr  "Project-Id-Version: %s\n"
 		if msgid.msgctxt != "" {
 			fmt.Fprintf(out, "msgctxt \"%v\"\n", formatOutput(msgid.msgctxt))
 		}
-		fmt.Fprintf(out, "msgid   \"%v\"\n", formatOutput(k))
+		fmt.Fprintf(out, "msgid   \"%v\"\n", formatOutput(msgid.msgtext))
 		if msgid.msgidPlural != "" {
 			fmt.Fprintf(out, "msgid_plural   \"%v\"\n", formatOutput(msgid.msgidPlural))
 			fmt.Fprintf(out, "msgstr[0]  \"\"\n")
